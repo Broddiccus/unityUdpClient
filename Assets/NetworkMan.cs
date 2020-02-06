@@ -8,13 +8,19 @@ using System.Net;
 
 public class NetworkMan : MonoBehaviour
 {
+    public GameObject spawnPlayer;
     public UdpClient udp;
+    private List<Player> cPlayers = new List<Player>();
+    private PlayerScript myPlayer;
+    private List<Player> unmadePlayers = new List<Player>();
+    private List<PlayerScript> sPlayers = new List<PlayerScript>();
+    private List<string> discPlayers = new List<string>();
     // Start is called before the first frame update
     void Start()
     {
         udp = new UdpClient();
         
-        udp.Connect("PUT_IP_ADDRESS_HERE",12345);
+        udp.Connect("18.223.162.138", 12345);
 
         Byte[] sendBytes = Encoding.ASCII.GetBytes("connect");
       
@@ -32,23 +38,39 @@ public class NetworkMan : MonoBehaviour
 
     public enum commands{
         NEW_CLIENT,
-        UPDATE
+        UPDATE,
+        DISCONNECT,
+        LIST
     };
-    
+    [Serializable]
+    public struct receivedColor
+    {
+        public float R;
+        public float G;
+        public float B;
+    }
+    [Serializable]
+    public struct receivedPos
+    {
+        public float X;
+        public float Y;
+        public float Z;
+    }
+
     [Serializable]
     public class Message{
         public commands cmd;
+        public Player player;
+        public Player[] players;
+        public string discID;
     }
     
     [Serializable]
     public class Player{
         public string id;
-        public struct receivedColor{
-            public float R;
-            public float G;
-            public float B;
-        }
-        public receivedColor color;        
+        
+        public receivedColor color;
+        public receivedPos pos;
     }
 
     [Serializable]
@@ -81,9 +103,25 @@ public class NetworkMan : MonoBehaviour
         try{
             switch(latestMessage.cmd){
                 case commands.NEW_CLIENT:
+                    unmadePlayers.Add(latestMessage.player);
                     break;
                 case commands.UPDATE:
+                    for (int i = 0; i < latestMessage.players.Length; i++)
+                    {
+                        for (int j = 0; j < cPlayers.Count; j++)
+                        {
+                            if (cPlayers[j].id == latestMessage.players[i].id)
+                            {
+                                cPlayers[j] = latestMessage.players[i];
+                            }
+                        }
+                    }
                     lastestGameState = JsonUtility.FromJson<GameState>(returnData);
+                    break;
+                case commands.DISCONNECT:
+                    discPlayers.Add(latestMessage.discID);
+                    break;
+                case commands.LIST:
                     break;
                 default:
                     Debug.Log("Error");
@@ -99,25 +137,65 @@ public class NetworkMan : MonoBehaviour
     }
 
     void SpawnPlayers(){
-
+        foreach (Player p in unmadePlayers)
+        {
+            GameObject temp = Instantiate(spawnPlayer);
+            PlayerScript s = temp.GetComponent<PlayerScript>();
+            
+            if (cPlayers.Count == 0)
+            {
+                myPlayer = s;
+                s.PlayerStart(p.id, p.color.R, p.color.G, p.color.B, true);
+            }
+            else
+            {
+                s.PlayerStart(p.id, p.color.R, p.color.G, p.color.B, false);
+            }
+            cPlayers.Add(p);
+            sPlayers.Add(s);
+        }
+        unmadePlayers.Clear();
+        
     }
 
     void UpdatePlayers(){
-
+        for (int i = 0; i < cPlayers.Count; i++)
+        {
+            sPlayers[i].PlayerUpdate(cPlayers[i].id, cPlayers[i].color.R, cPlayers[i].color.G, cPlayers[i].color.B, cPlayers[i].pos.X, cPlayers[i].pos.Y, cPlayers[i].pos.Z);
+        }
     }
 
     void DestroyPlayers(){
-
+        for (int i = 0; i < discPlayers.Count; i++)
+        {
+            for (int j = 0; j < cPlayers.Count; j++)
+            {
+                if (discPlayers[i] == cPlayers[j].id)
+                {
+                    Destroy(sPlayers[j].gameObject);
+                    cPlayers.Remove(cPlayers[j]);
+                    sPlayers.Remove(sPlayers[j]);
+                }
+            }
+        }
+        discPlayers.Clear();
     }
     
     void HeartBeat(){
         Byte[] sendBytes = Encoding.ASCII.GetBytes("heartbeat");
         udp.Send(sendBytes, sendBytes.Length);
+        Byte[] sendBytes2 = Encoding.ASCII.GetBytes(myPlayer.positVec.x.ToString() + "," + myPlayer.positVec.y.ToString() + "," + myPlayer.positVec.z.ToString());
+        Debug.Log(sendBytes2);
+        udp.Send(sendBytes2, sendBytes2.Length);
     }
 
     void Update(){
-        SpawnPlayers();
+        if (unmadePlayers.Count > 0)
+            SpawnPlayers();
+        
+        
         UpdatePlayers();
-        DestroyPlayers();
+        if (discPlayers.Count > 0)
+            DestroyPlayers();
     }
 }
